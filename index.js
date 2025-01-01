@@ -1,4 +1,4 @@
-require('dotenv').config();
+require("dotenv").config();
 const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
@@ -14,7 +14,7 @@ const server = http.createServer(app);
   try {
     await mongoose.connect(process.env.MONGODB_URL);
     console.log("Connected to MongoDB");
-  }catch(err){
+  } catch (err) {
     console.log(err);
   }
 })();
@@ -94,6 +94,7 @@ io.on("connection", (socket) => {
   socket.on("mute-user", handleMuteUser);
   // Handle chat messages
   socket.on("chat-message", handleChat(socket));
+  socket.on("leave-room", handleLeaveRoom(socket));
   socket.on("disconnect", handleDisconnect(socket));
 });
 
@@ -115,7 +116,7 @@ function handleJoinRoom(socket) {
     }
 
     const roomLength = room.users.length;
-    name = (userId === "" && !name) ? `Guest ${roomLength}` : name;
+    name = userId === "" && !name ? `Guest ${roomLength}` : name;
 
     let role = "guest";
     if (userId !== "") {
@@ -160,7 +161,9 @@ function handleJoinRoom(socket) {
 function handleMuteUser({ roomID, targetUserId }) {
   Room.findOne({ roomID }).then((room) => {
     if (room) {
-      const targetUser = room.users.find((user) => user.userId === targetUserId);
+      const targetUser = room.users.find(
+        (user) => user.userId === targetUserId
+      );
       if (targetUser) {
         io.to(targetUser.socketID).emit("muted");
         console.log(`User ${targetUserId} muted by the host`);
@@ -169,32 +172,38 @@ function handleMuteUser({ roomID, targetUserId }) {
   });
 }
 
+function handleLeaveRoom(socket) {
+  return async ({ roomID}) => {
+    console.log("User Leaving Room:", socket.id);
+
+    const room = await Room.findOne({ roomID });
+
+    const disconnectedUser = room.users.find(
+      (user) => user.socketID === socket.id
+    );
+    if (disconnectedUser) {
+      console.log(
+        `Removing user ${disconnectedUser.userId} from room ${room.roomID}`
+      );
+      room.users = room.users.filter((user) => user.socketID !== socket.id);
+
+      socket.to(room.roomID).emit("user-disconnected", {
+        peerID: disconnectedUser.peerID,
+      });
+
+      if (room.users.length === 0) {
+        await Room.deleteOne({ roomID: room.roomID });
+        console.log(`Room ${room.roomID} deleted as it is empty`);
+      } else {
+        await room.save();
+      }
+    }
+  };
+}
+
 function handleDisconnect(socket) {
   return async () => {
     console.log("User disconnected:", socket.id);
-
-    const rooms = await Room.find();
-    for (const room of rooms) {
-      const disconnectedUser = room.users.find((user) => user.socketID === socket.id);
-      if (disconnectedUser) {
-        console.log(
-          `Removing user ${disconnectedUser.userId} from room ${room.roomID}`
-        );
-        room.users = room.users.filter((user) => user.socketID !== socket.id);
-
-        socket.to(room.roomID).emit("user-disconnected", {
-          peerID: disconnectedUser.peerID,
-        });
-
-        if (room.users.length === 0) {
-          await Room.deleteOne({ roomID: room.roomID });
-          console.log(`Room ${room.roomID} deleted as it is empty`);
-        } else {
-          await room.save();
-        }
-        break;
-      }
-    }
   };
 }
 
